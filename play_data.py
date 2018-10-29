@@ -2,9 +2,25 @@ import requests
 import logging
 import pandas as pd
 import numpy as np
+from IPython.display import display
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_ppp():
+    points = np.array([(16, 1), (48, 2), (64, 3), (82, 4),
+                       (92, 5), (98, 6), (100, 7)])
+    x = points[:, 0]
+    y = points[:, 1]
+    z = np.polyfit(x, y, 3)
+    f = np.poly1d(z)
+    x_new = np.linspace(x[0], x[-1], 100)
+    y_new = f(x_new)
+    return y_new
+
+
+
 
 def get_json_data(game_id):
     response = requests.get(
@@ -56,6 +72,8 @@ def get_clean_play_data(drive_data, awayTeam, homeTeam, possTeam):
             type_abv = d['type']['abbreviation']
             type_text = d['type']['text']
             u_dict['type_abv'] = get_td_play_type(type_abv, type_text)
+        elif 'text' in d['type'].keys():
+            u_dict['type_abv'] = d['type']['text']
         if 'text' in d['type'].keys():
             u_dict['type_text'] = d['type']['text']
         u_dict['startDown'] = d['start']['down']
@@ -77,20 +95,30 @@ def get_td_play_type(type_abv, type_text):
             return 'REC'
         elif type_text.split()[0] == 'Rushing':
             return 'RUSH'
+    if type_abv is None or np.isnan(type_abv):
+        return type_text
     return type_abv
 
 def clean_all_drives(json, awayTeam, homeTeam):
     data = json['gamepackageJSON']['drives']
-    if 'previous' in data.keys():
-        drives = data['previous']
+    if 'previous' in data.keys() and 'current' in data.keys():
         play_by_play = []
-        for d in drives:
+        cur_drives = data['current']
+        for d in cur_drives:
+            possTeam = d['team']['abbreviation']
+            clean_drives = get_clean_play_data(
+                d['plays'], awayTeam, homeTeam, possTeam)
+            play_by_play = play_by_play + clean_drives
+
+        prev_drives = data['previous']
+        for d in prev_drives:
             possTeam = d['team']['abbreviation']
             clean_drives = get_clean_play_data(d['plays'], awayTeam, homeTeam, possTeam)
             play_by_play = play_by_play + clean_drives
+
         return play_by_play
-    elif 'drives' in data.keys():
-        drives = data['current']
+    elif 'previous' in data.keys():
+        drives = data['previous']
         play_by_play = []
         for d in drives:
             possTeam = d['team']['abbreviation']
@@ -100,17 +128,26 @@ def clean_all_drives(json, awayTeam, homeTeam):
     logger.error("No drives found")
 
 def success_rate_bool(statYardage, startDown, startDistance, type_abv):
-    if type_abv == "REC" or type_abv == "RUSH":
+    if type_abv == "REC" or type_abv == "RUSH" or type_abv == "Fumble Recovery (Own)":
         if startDown == 1:
-            suc_yards = round(startDistance / 2,0)
+            suc_yards = startDistance / 2
         elif startDown == 2:
-            suc_yards = round(startDistance * 0.7, 0)
+            suc_yards = startDistance * 0.7
         else:
             suc_yards = startDistance
 
         if statYardage >= suc_yards:
             return True
         return False
+    elif type_abv == "INTR":
+        return False
+    elif type_abv == 'Pass Incompletion':
+        return False
+    elif type_abv == 'Sack':
+        return False
+    elif type_abv == 'Fumble Recovery (Opponent)':
+        return False
+
     return np.nan
 
 def garbage_time_calc(homeScore, awayScore, quarter):
@@ -163,6 +200,14 @@ def down_type_calc(down, distance):
         return 'STD'
     return 'PASS'
 
+
+def calc_ppp(statYardage):
+    global ppp_list
+    if statYardage < 0:
+        index = abs(statYardage) + 1
+        return - ppp_list[index]
+    return ppp_list[statYardage + 1]
+
 def add_adv_stats(df, away_abv, home_abv):
     df['successPlay'] = df.apply(
         lambda row: success_rate_bool(
@@ -191,7 +236,11 @@ def add_adv_stats(df, away_abv, home_abv):
     df['downType'] = df.apply(
         lambda row: down_type_calc(row['startDown'], row['startDistance']), axis=1
     )
+    ppp_list = get_ppp()
 
+    df['PPP'] = df.apply(
+        lambda row: ppp[row['statYardage'] + 1 ], axis=1
+    )
     return df
 
 def make_df(gameId):
@@ -218,3 +267,98 @@ def suc_down_type(df):
 
 def suc_play_type(df):
     return df.groupby(['possession', 'type_abv'])['successPlay'].apply(lambda x: x[x == True].count() / x.count())
+
+def suc_by_down(df):
+    return df[(df.startDown > 0) & (df.startDown < 4)].groupby(['possession', 'startDown'])['successPlay'].apply(lambda x: x[x == True].count() / x.count())
+
+
+def frames_to_diplay(df):
+    print("--------- SUCCESS RATE START ----------")
+    print('-------- OVERALL SUCCESS RATE ---------')
+    display(
+        df[df['garbageBool'] == False].groupby(['possession'])['successPlay'].apply(
+        lambda x: x[x == True].count() / x.count()).to_frame()
+    )
+    print("------- SUCCESS RATE BY QTR ------------")
+    display(
+        df[df['garbageBool'] == False].groupby(['possession', 'quarter'])['successPlay'].apply(
+        lambda x: x[x == True].count() / x.count()).to_frame()
+    )
+    print("-------- SUCCESS RATE BY DOWN ------------")
+    display(
+        df[df['garbageBool'] == False].groupby(['possession', 'downType'])['successPlay'].apply(
+        lambda x: x[x == True].count() / x.count()).to_frame()
+    )
+
+    print("-------- SUCCESS RATE BY PLAY TYPE ------------")
+    display(
+        df[
+            (df['garbageBool'] == False) &
+            (df['type_abv'] == "RUSH") |
+            (df['type_abv'] == "REC")
+        ].groupby(['possession', 'downType'])['successPlay'].apply(
+        lambda x: x[x == True].count() / x.count()).to_frame()
+    )
+
+    print("-----------SUCCESS RATE END ----------")
+    print("--------EXPLOSIVE PLAYS START ------------")
+    print("-------- RUSH PLAYS > 10 YARDS -----------")
+    display(
+        df[
+            (df['successPlay'] == True) &
+            (df['garbageBool'] == False) &
+            (df['statYardage'] > 10) &
+            (df['type_abv'] == 'RUSH')
+        ].groupby('possession')['statYardage'].count().to_frame()
+    )
+
+    print("--------- PASS PLAYS > 20 YARDS ---------------")
+    display(
+        df[
+            (df['successPlay'] == True) &
+            (df['garbageBool'] == False) &
+            (df['statYardage'] > 20) &
+            (df['type_abv'] == 'REC')
+        ].groupby('possession')['statYardage'].count().to_frame()
+    )
+
+    print("-------- AVG YARDS ON SUC PLAYS ---------------")
+    display(
+        df[
+            (df['successPlay'] == True) &
+            (df['garbageBool'] == False)
+        ].groupby('possession')['statYardage'].mean().to_frame()
+    )
+
+    print("--------EXPLOSIVE PLAYS END ------------")
+    print("---------- LINE YARDS AVG OVERALL --------------")
+    display(
+        df[
+            (df['successPlay'] == True) &
+            (df['type_abv'] == 'RUSH')
+        ].groupby(['possession'])['lineYards'].mean().to_frame()
+    )
+
+    print("---------- LINE YARDS AVG BY QTR --------------")
+    display(
+        df[
+            (df['successPlay'] == True) &
+            (df['type_abv'] == 'RUSH')
+        ].groupby(['possession', 'quarter'])['lineYards'].mean().to_frame()
+    )
+
+    print("----------- HIGHLIGHT YARDS AVG OVERALL ------------")
+    display(
+        df[
+            (df['successPlay'] == True) &
+            (df['type_abv'] == 'RUSH')
+        ].groupby(['possession'])['highlightYards'].mean().to_frame()
+    )
+
+    print("---------- HIGHLIGHT YARDS AVG BY QTR --------------")
+    display(
+        df[
+            (df['successPlay'] == True) &
+            (df['type_abv'] == 'RUSH')
+        ].groupby(['possession', 'quarter'])['highlightYards'].mean().to_frame()
+    )
