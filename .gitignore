@@ -3,3 +3,5 @@ __pycache__/
 *.csv
 Untitled.ipynb
 ipython_notebooks/
+excel_files/
+.DS_Store

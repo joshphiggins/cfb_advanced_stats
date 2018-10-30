@@ -95,7 +95,7 @@ def get_td_play_type(type_abv, type_text):
             return 'REC'
         elif type_text.split()[0] == 'Rushing':
             return 'RUSH'
-    if type_abv is None or np.isnan(type_abv):
+    if type_abv is None or pd.isnull(type_abv):
         return type_text
     return type_abv
 
@@ -196,13 +196,15 @@ def down_type_calc(down, distance):
         return 'STD'
     elif down == 2 and distance < 8:
         return 'STD'
-    elif down == 3 or down == 4 and distance < 5:
+    elif down == 3 and distance < 5:
+        return 'STD'
+    elif down == 4 and distance < 5:
         return 'STD'
     return 'PASS'
 
 
 def calc_ppp(statYardage):
-    global ppp_list
+    ppp_list = get_ppp()
     if statYardage < 0:
         index = abs(statYardage) + 1
         return - ppp_list[index]
@@ -236,11 +238,7 @@ def add_adv_stats(df, away_abv, home_abv):
     df['downType'] = df.apply(
         lambda row: down_type_calc(row['startDown'], row['startDistance']), axis=1
     )
-    ppp_list = get_ppp()
 
-    df['PPP'] = df.apply(
-        lambda row: ppp[row['statYardage'] + 1 ], axis=1
-    )
     return df
 
 def make_df(gameId):
@@ -273,23 +271,26 @@ def suc_by_down(df):
 
 
 def frames_to_diplay(df):
-    print("--------- SUCCESS RATE START ----------")
+    print("--------- EFFICIENCY ----------")
+    print("\n")
     print('-------- OVERALL SUCCESS RATE ---------')
     display(
         df[df['garbageBool'] == False].groupby(['possession'])['successPlay'].apply(
         lambda x: x[x == True].count() / x.count()).to_frame()
     )
+    print("\n")
     print("------- SUCCESS RATE BY QTR ------------")
     display(
         df[df['garbageBool'] == False].groupby(['possession', 'quarter'])['successPlay'].apply(
         lambda x: x[x == True].count() / x.count()).to_frame()
     )
+    print("\n")
     print("-------- SUCCESS RATE BY DOWN ------------")
     display(
         df[df['garbageBool'] == False].groupby(['possession', 'downType'])['successPlay'].apply(
         lambda x: x[x == True].count() / x.count()).to_frame()
     )
-
+    print("\n")
     print("-------- SUCCESS RATE BY PLAY TYPE ------------")
     display(
         df[
@@ -299,29 +300,30 @@ def frames_to_diplay(df):
         ].groupby(['possession', 'downType'])['successPlay'].apply(
         lambda x: x[x == True].count() / x.count()).to_frame()
     )
-
-    print("-----------SUCCESS RATE END ----------")
+    print("\n")
+    print("\n")
     print("--------EXPLOSIVE PLAYS START ------------")
+    print("\n")
     print("-------- RUSH PLAYS > 10 YARDS -----------")
     display(
         df[
             (df['successPlay'] == True) &
             (df['garbageBool'] == False) &
-            (df['statYardage'] > 10) &
+            (df['statYardage'] >= 10) &
             (df['type_abv'] == 'RUSH')
         ].groupby('possession')['statYardage'].count().to_frame()
     )
-
+    print("\n")
     print("--------- PASS PLAYS > 20 YARDS ---------------")
     display(
         df[
             (df['successPlay'] == True) &
             (df['garbageBool'] == False) &
-            (df['statYardage'] > 20) &
+            (df['statYardage'] >= 20) &
             (df['type_abv'] == 'REC')
         ].groupby('possession')['statYardage'].count().to_frame()
     )
-
+    print("\n")
     print("-------- AVG YARDS ON SUC PLAYS ---------------")
     display(
         df[
@@ -330,7 +332,7 @@ def frames_to_diplay(df):
         ].groupby('possession')['statYardage'].mean().to_frame()
     )
 
-    print("--------EXPLOSIVE PLAYS END ------------")
+    print("\n")
     print("---------- LINE YARDS AVG OVERALL --------------")
     display(
         df[
@@ -339,6 +341,7 @@ def frames_to_diplay(df):
         ].groupby(['possession'])['lineYards'].mean().to_frame()
     )
 
+    print("\n")
     print("---------- LINE YARDS AVG BY QTR --------------")
     display(
         df[
@@ -346,7 +349,7 @@ def frames_to_diplay(df):
             (df['type_abv'] == 'RUSH')
         ].groupby(['possession', 'quarter'])['lineYards'].mean().to_frame()
     )
-
+    print("\n")
     print("----------- HIGHLIGHT YARDS AVG OVERALL ------------")
     display(
         df[
@@ -354,7 +357,7 @@ def frames_to_diplay(df):
             (df['type_abv'] == 'RUSH')
         ].groupby(['possession'])['highlightYards'].mean().to_frame()
     )
-
+    print("\n")
     print("---------- HIGHLIGHT YARDS AVG BY QTR --------------")
     display(
         df[
